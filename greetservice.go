@@ -15,6 +15,8 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -461,18 +463,37 @@ func (e *ExamService) TestLocalOCR() (string, error) {
 
 // TakeScreenshot 截取屏幕
 func (e *ExamService) TakeScreenshot() (string, error) {
-	// 使用screencapture命令截图
-	cmd := exec.Command("screencapture", "-x", "-t", "png", "/tmp/screenshot.png")
+	var cmd *exec.Cmd
+	var tempFile string
+
+	// 根据操作系统选择不同的截图命令
+	switch runtime.GOOS {
+	case "darwin": // macOS
+		tempFile = "/tmp/screenshot.png"
+		cmd = exec.Command("screencapture", "-x", "-t", "png", tempFile)
+	case "windows": // Windows
+		tempFile = filepath.Join(os.TempDir(), "screenshot.png")
+		cmd = exec.Command("powershell", "-Command", "Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $screen = [System.Windows.Forms.Screen]::PrimaryScreen; $bitmap = New-Object System.Drawing.Bitmap $screen.Bounds.Width, $screen.Bounds.Height; $graphics = [System.Drawing.Graphics]::FromImage($bitmap); $graphics.CopyFromScreen($screen.Bounds.X, $screen.Bounds.Y, 0, 0, $screen.Bounds.Size); $bitmap.Save('"+tempFile+"', [System.Drawing.Imaging.ImageFormat]::Png); $graphics.Dispose(); $bitmap.Dispose()")
+	case "linux": // Linux
+		tempFile = "/tmp/screenshot.png"
+		cmd = exec.Command("import", "-window", "root", tempFile)
+	default:
+		return "", fmt.Errorf("不支持的操作系统: %s", runtime.GOOS)
+	}
+
 	err := cmd.Run()
 	if err != nil {
 		return "", fmt.Errorf("截图失败: %v", err)
 	}
 
 	// 读取截图文件
-	imageData, err := os.ReadFile("/tmp/screenshot.png")
+	imageData, err := os.ReadFile(tempFile)
 	if err != nil {
 		return "", fmt.Errorf("读取截图文件失败: %v", err)
 	}
+
+	// 清理临时文件
+	os.Remove(tempFile)
 
 	// 转换为base64编码
 	base64Data := base64.StdEncoding.EncodeToString(imageData)
