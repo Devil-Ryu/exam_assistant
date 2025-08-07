@@ -1,0 +1,58 @@
+import { defineConfig } from 'vite'
+import vue from '@vitejs/plugin-vue'
+
+// https://vitejs.dev/config/
+export default defineConfig({
+  plugins: [vue()],
+  server: {
+    hmr: {
+      overlay: true
+    },
+    watch: {
+      usePolling: true,
+      interval: 100
+    },
+    host: true,
+    port: 9245,
+    strictPort: true
+  },
+  build: {
+    // 移除 watch 配置，避免构建后继续监听
+    // watch: {},
+    rollupOptions: {
+      output: {
+        // 简化分块策略
+        manualChunks: {
+          'vue-vendor': ['vue'],
+          'tdesign-vendor': ['tdesign-vue-next'],
+          'utils-vendor': ['xlsx', 'papaparse'],
+          'wails-vendor': ['@wailsio/runtime']
+        }
+      }
+    },
+    // 提高块大小警告限制
+    chunkSizeWarningLimit: 2000,
+    // 简化压缩配置
+    minify: 'terser',
+    terserOptions: {
+      compress: {
+        drop_console: true,
+        drop_debugger: true
+      }
+    },
+    sourcemap: false,
+    target: 'es2015',
+    // 添加构建超时设置
+    reportCompressedSize: false
+  },
+  // 优化依赖预构建
+  optimizeDeps: {
+    include: ['vue', 'tdesign-vue-next', 'xlsx', 'papaparse'],
+    exclude: ['@wailsio/runtime']
+  },
+  // 定义全局变量
+  define: {
+    __VUE_OPTIONS_API__: true,
+    __VUE_PROD_DEVTOOLS__: false
+  }
+})

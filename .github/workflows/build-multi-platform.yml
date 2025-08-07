@@ -1,0 +1,158 @@
+name: 构建多平台可执行文件
+
+# 触发条件：当推送标签或手动触发时执行
+on:
+  push:
+    tags:
+      - 'v*'  # 推送以v开头的标签时触发
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  build:
+    # 使用矩阵策略构建多个平台
+    strategy:
+      matrix:
+        include:
+          - name: Windows AMD64
+            os: windows-latest
+            arch: amd64
+            target: build
+          # - name: Windows ARM64
+          #   os: windows-latest
+          #   arch: arm64
+          #   target: build
+          # - name: macOS Intel
+          #   os: macos-13  # 使用macos-13为x64
+          #   arch: amd64
+          #   target: darwin:package
+          - name: macOS Universal
+            os: macos-latest # 使用macos-latest为arm64
+            arch: arm64
+            target: darwin:package:universal
+
+    runs-on: ${{ matrix.os }}
+    name: 构建 ${{ matrix.name }} 可执行文件
+    timeout-minutes: 60  # 设置超时时间为60分钟
+
+    steps:
+      # 第零步：查看当前系统架构
+      - name: 查看系统架构
+        shell: bash
+        run: |
+          echo "=== 当前系统架构信息 ==="
+          echo "操作系统: $RUNNER_OS"
+          echo "架构: $RUNNER_ARCH"
+          echo "机器架构: $(uname -m)"
+          echo "完整系统信息: $(uname -a)"
+
+      # 第一步：检出代码仓库
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 获取完整的git历史
+
+      # 第二步：设置Go环境
+      - name: 设置 Go 环境
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.24'  # 使用Go 1.24版本
+          cache: true  # 启用Go模块缓存
+
+      # 第三步：设置Node.js环境
+      - name: 设置 Node.js 环境
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'  # 使用Node.js 18版本
+          cache: 'npm'  # 启用npm缓存
+          cache-dependency-path: frontend/package-lock.json  # 指定缓存路径
+
+      # 第四步：配置npm设置（提高下载稳定性）
+      - name: 配置 npm 设置
+        shell: bash
+        working-directory: ./frontend
+        run: |
+          # 设置npm镜像源
+          npm config set registry https://registry.npmjs.org/
+          # 设置重试次数和超时时间
+          npm config set fetch-retries 5
+          npm config set fetch-retry-mintimeout 10000
+          npm config set fetch-retry-maxtimeout 120000
+          # npm config set timeout 300000
+          npm config set maxsockets 50
+          npm config set progress false
+
+      # 第五步：清理npm缓存
+      - name: 清理 npm 缓存
+        shell: bash
+        working-directory: ./frontend
+        run: npm cache clean --force
+
+      # 第六步：安装前端依赖
+      - name: 安装前端依赖
+        shell: bash
+        working-directory: ./frontend
+        run: |
+          # 使用ci命令安装依赖，确保版本一致性
+          npm ci --no-audit --no-fund --prefer-offline --verbose --loglevel=warn
+        timeout-minutes: 30
+
+
+      # 第七步：构建前端代码
+      - name: 构建前端代码
+        shell: bash
+        working-directory: ./frontend
+        run: npm run build
+        timeout-minutes: 20
+
+      # 第八步：安装Wails CLI工具
+      - name: 安装 Wails3 CLI
+        shell: bash
+        run: |
+          # 安装最新版本的Wails3 CLI
+          go install -v github.com/wailsapp/wails/v3/cmd/wails3@latest
+        timeout-minutes: 15
+
+      # 第九步：构建应用程序
+      - name: 构建应用程序
+        shell: bash
+        run: |
+          wails3 task ${{ matrix.target }}
+        timeout-minutes: 25
+
+      # 第十步：上传构建产物
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: exam-assistant-${{ matrix.os }}-${{ matrix.arch }}  # 产物名称，包含平台信息
+          path: bin/exam_assistant*  # 上传所有匹配的可执行文件
+          retention-days: 30  # 保留30天
+
+  # # 创建发布任务（需要等待所有构建完成）
+  # release:
+  #   needs: build
+  #   runs-on: ubuntu-latest
+  #   if: startsWith(github.ref, 'refs/tags/')  # 仅在推送标签时执行
+
+  #   steps:
+  #     # 第一步：检出代码
+  #     - name: 检出代码
+  #       uses: actions/checkout@v4
+
+  #     # 第二步：下载所有构建产物
+  #     - name: 下载所有构建产物
+  #       uses: actions/download-artifact@v4
+
+  #     # 第三步：创建 GitHub 发布
+  #     - name: 创建 GitHub 发布
+  #       uses: softprops/action-gh-release@v1
+  #       with:
+  #         files: |
+  #           exam-assistant-windows_amd64/*
+  #           exam-assistant-windows_arm64/*
+  #           exam-assistant-darwin_amd64/*
+  #           exam-assistant-darwin_arm64/*
+  #         draft: false  # 不创建草稿版本
+  #         prerelease: false  # 不创建预发布版本
+  #         generate_release_notes: true  # 自动生成发布说明
+  #       env:
+  #         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # 使用GitHub提供的token 
